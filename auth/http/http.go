@@ -8,14 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
 )
 
-// TODO : What is timeout for? I think it may be to prevent too many requests. This seems like the incorrect place for this
-type HTTPAuthHook struct {
+// Hook is a hook that makes http requests to an external service
+type Hook struct {
 	httpclient     *http.Client
 	aclhost        *url.URL
 	clientauthhost *url.URL
@@ -23,23 +22,24 @@ type HTTPAuthHook struct {
 	mqtt.HookBase
 }
 
-type HTTPAuthHookConfig struct {
+// Options is a struct that contains all the information required to configure the http hook
+// It is the responsibility of the configurer to pass a properly configured RoundTripper that takes
+// care other requirements such as authentication, timeouts, retries, etc
+type Options struct {
 	ACLHost                  *url.URL
 	SuperUserHost            *url.URL
 	ClientAuthenticationHost *url.URL // currently unused
 	RoundTripper             http.RoundTripper
 }
 
-type SuperuserCheckPOST struct {
-	Username string `json:"username"`
-}
-
+// ClientCheckPOST is the struct that is sent to the client authentication endpoint
 type ClientCheckPOST struct {
 	ClientID string `json:"clientid"`
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
 
+// ACLCheckPOST is the struct that is sent to the acl endpoint
 type ACLCheckPOST struct {
 	Username string `json:"username"`
 	ClientID string `json:"clientid"`
@@ -47,31 +47,26 @@ type ACLCheckPOST struct {
 	ACC      string `json:"acc"`
 }
 
-type TimeoutConfig struct {
-	TimeoutDuration time.Duration
-}
-
-type CacheConfig struct {
-	Duration time.Duration
-}
-
-func (h *HTTPAuthHook) ID() string {
+// ID returns the ID of the hook
+func (h *Hook) ID() string {
 	return "http-auth-hook"
 }
 
-func (h *HTTPAuthHook) Provides(b byte) bool {
+// Provides returns whether or not the hook provides the given hook
+func (h *Hook) Provides(b byte) bool {
 	return bytes.Contains([]byte{
 		mqtt.OnACLCheck,
 		mqtt.OnConnectAuthenticate,
 	}, []byte{b})
 }
 
-func (h *HTTPAuthHook) Init(config any) error {
+// Init initializes the hook with the given config
+func (h *Hook) Init(config any) error {
 	if config == nil {
 		return errors.New("nil config")
 	}
 
-	authHookConfig, ok := config.(HTTPAuthHookConfig)
+	authHookConfig, ok := config.(Options)
 	if !ok {
 		return errors.New("improper config")
 	}
@@ -88,7 +83,8 @@ func (h *HTTPAuthHook) Init(config any) error {
 	return nil
 }
 
-func (h *HTTPAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
+// OnConnectAuthenticate is called when a client attempts to connect to the server
+func (h *Hook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
 
 	payload := ClientCheckPOST{
 		ClientID: cl.ID,
@@ -98,7 +94,7 @@ func (h *HTTPAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet)
 
 	resp, err := h.makeRequest(http.MethodPost, h.clientauthhost, payload)
 	if err != nil {
-		h.Log.Error("", "error", err)
+		h.Log.Error("error occurred while making http request", "error", err)
 		return false
 	}
 
@@ -110,7 +106,8 @@ func (h *HTTPAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet)
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-func (h *HTTPAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
+// OnACLCheck is called when a client attempts to publish or subscribe to a topic
+func (h *Hook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 
 	payload := ACLCheckPOST{
 		ClientID: cl.ID,
@@ -121,7 +118,7 @@ func (h *HTTPAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) boo
 
 	resp, err := h.makeRequest(http.MethodPost, h.aclhost, payload)
 	if err != nil {
-		h.Log.Error("", "error", err)
+		h.Log.Error("error occurred while making http request", "error", err)
 		return false
 	}
 
@@ -132,14 +129,13 @@ func (h *HTTPAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) boo
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-func (h *HTTPAuthHook) makeRequest(requestType string, url *url.URL, payload any) (*http.Response, error) {
+func (h *Hook) makeRequest(requestType string, url *url.URL, payload any) (*http.Response, error) {
 	var buffer io.Reader
 	if payload == nil {
 		buffer = http.NoBody
 	} else {
 		rb, err := json.Marshal(payload)
 		if err != nil {
-			h.Log.Error("", "error", err)
 			return nil, err
 		}
 		buffer = bytes.NewBuffer(rb)
@@ -147,20 +143,18 @@ func (h *HTTPAuthHook) makeRequest(requestType string, url *url.URL, payload any
 
 	req, err := http.NewRequest(requestType, url.String(), buffer)
 	if err != nil {
-		h.Log.Error("", "error", err)
 		return nil, err
 	}
 
 	resp, err := h.httpclient.Do(req)
 	if err != nil {
-		h.Log.Error("", "error", err)
 		return nil, err
 	}
 
 	return resp, nil
 }
 
-func validateConfig(config HTTPAuthHookConfig) bool {
+func validateConfig(config Options) bool {
 	if (config.ACLHost == nil) || (config.ClientAuthenticationHost == nil) {
 		return false
 	}
