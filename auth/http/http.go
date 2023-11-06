@@ -15,10 +15,11 @@ import (
 
 // Hook is a hook that makes http requests to an external service
 type Hook struct {
-	httpclient     *http.Client
+	httpClient     *http.Client
 	aclhost        *url.URL
 	clientauthhost *url.URL
 	superuserhost  *url.URL // currently unused
+	callback       func(resp *http.Response, extras ...any) bool
 	mqtt.HookBase
 }
 
@@ -30,6 +31,7 @@ type Options struct {
 	SuperUserHost            *url.URL
 	ClientAuthenticationHost *url.URL // currently unused
 	RoundTripper             http.RoundTripper
+	Callback                 func(resp *http.Response, extras ...any) bool
 }
 
 // ClientCheckPOST is the struct that is sent to the client authentication endpoint
@@ -75,7 +77,12 @@ func (h *Hook) Init(config any) error {
 		return errors.New("hostname configs failed validation")
 	}
 
-	h.httpclient = NewTransport(authHookConfig.RoundTripper)
+	h.callback = defaultCallback
+	if authHookConfig.Callback != nil {
+		h.callback = authHookConfig.Callback
+	}
+
+	h.httpClient = NewTransport(authHookConfig.RoundTripper)
 
 	h.aclhost = authHookConfig.ACLHost
 	h.clientauthhost = authHookConfig.ClientAuthenticationHost
@@ -98,12 +105,7 @@ func (h *Hook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
 		return false
 	}
 
-	// Block on proper 4xx response
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return false
-	}
-
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	return h.callback(resp)
 }
 
 // OnACLCheck is called when a client attempts to publish or subscribe to a topic
@@ -122,11 +124,7 @@ func (h *Hook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 		return false
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return false
-	}
-
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	return h.callback(resp)
 }
 
 func (h *Hook) makeRequest(requestType string, url *url.URL, payload any) (*http.Response, error) {
@@ -146,7 +144,7 @@ func (h *Hook) makeRequest(requestType string, url *url.URL, payload any) (*http
 		return nil, err
 	}
 
-	resp, err := h.httpclient.Do(req)
+	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -186,4 +184,8 @@ func NewTransport(rt http.RoundTripper) *http.Client {
 // RoundTrip goes through the HTTP RoundTrip implementation and attempts to add ASAP if not passed it
 func (st *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return st.OriginalTransport.RoundTrip(r)
+}
+
+func defaultCallback(resp *http.Response, _ ...any) bool {
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
