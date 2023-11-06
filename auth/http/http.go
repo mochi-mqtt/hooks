@@ -158,8 +158,6 @@ func validateConfig(config Options) bool {
 		return false
 	}
 	return true
-
-	// return !((config.ACLHost == nil) || (config.ClientAuthenticationHost == nil))
 }
 
 // ***************************************
