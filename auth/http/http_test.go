@@ -60,7 +60,7 @@ func TestProvides(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	authHook := new(Hook)
-	// authHook.Log = &zerolog.Logger{}
+	authHook.Log = slog.Default()
 
 	tests := []struct {
 		name        string
@@ -68,8 +68,20 @@ func TestInit(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "Success - Proper config",
-			config:      Options{},
+			name: "Success - Proper config",
+			config: Options{
+				ACLHost:                  stringToURL("http://aclhost.com"),
+				ClientAuthenticationHost: stringToURL("http://clientauthenticationhost.com"),
+			},
+			expectError: false,
+		},
+		{
+			name: "Success - Proper config - callback function",
+			config: Options{
+				ACLHost:                  stringToURL("http://aclhost.com"),
+				ClientAuthenticationHost: stringToURL("http://clientauthenticationhost.com"),
+				Callback:                 func(resp *http.Response) bool { return true },
+			},
 			expectError: false,
 		},
 		{

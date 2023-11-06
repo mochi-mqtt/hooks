@@ -19,7 +19,7 @@ type Hook struct {
 	aclhost        *url.URL
 	clientauthhost *url.URL
 	superuserhost  *url.URL // currently unused
-	callback       func(resp *http.Response, extras ...any) bool
+	callback       func(resp *http.Response) bool
 	mqtt.HookBase
 }
 
@@ -31,7 +31,7 @@ type Options struct {
 	SuperUserHost            *url.URL
 	ClientAuthenticationHost *url.URL // currently unused
 	RoundTripper             http.RoundTripper
-	Callback                 func(resp *http.Response, extras ...any) bool
+	Callback                 func(resp *http.Response) bool
 }
 
 // ClientCheckPOST is the struct that is sent to the client authentication endpoint
@@ -79,6 +79,7 @@ func (h *Hook) Init(config any) error {
 
 	h.callback = defaultCallback
 	if authHookConfig.Callback != nil {
+		h.Log.Debug("replacing default callback with one included in options")
 		h.callback = authHookConfig.Callback
 	}
 
@@ -186,6 +187,6 @@ func (st *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return st.OriginalTransport.RoundTrip(r)
 }
 
-func defaultCallback(resp *http.Response, _ ...any) bool {
+func defaultCallback(resp *http.Response) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
